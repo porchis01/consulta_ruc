@@ -388,6 +388,15 @@ async function flujoRemype(browser, ruc) {
     try {
         remypePage = await browser.newPage();
 
+        // 🟢 Si aparece un diálogo NATIVO del navegador (alert/confirm/prompt),
+        //    se cierra automáticamente apenas aparece. Sin esto, un alert()
+        //    congela la página entera hasta que alguien lo cierra manualmente,
+        //    lo cual agotaría el timeout sin que nuestro código se entere.
+        remypePage.on('dialog', async (dialog) => {
+            console.log(`⚠ Diálogo nativo detectado en REMYPE ("${dialog.message()}"), cerrando...`);
+            await dialog.dismiss().catch(() => {});
+        });
+
         // 🟢 Reintento simple: al correr en serie (sin competir con SUNAT
         //    por la CPU), 25s debería alcanzar en la mayoría de los casos.
         //    Se deja 1 solo reintento como red de seguridad, para no
@@ -411,25 +420,44 @@ async function flujoRemype(browser, ruc) {
 
         await remypePage.waitForTimeout(3000);
 
-        const cerrarModal = async () => {
-            try {
-                const modal = remypePage.locator('#myModal');
+        // 🟢 Cierra TODOS los popups visibles (no solo #myModal, y no solo
+        //    una vez). Repite el chequeo varias veces por si al cerrar uno
+        //    aparece otro justo después (el caso que describiste: 2 popups
+        //    donde solo se cerraba el primero).
+        const cerrarModal = async (maxVueltas = 5) => {
+            for (let vuelta = 0; vuelta < maxVueltas; vuelta++) {
+                try {
+                    const modales = remypePage.locator(
+                        '.modal.show, .modal.in, [role="dialog"], #myModal, .modal'
+                    );
 
-                if (await modal.count() > 0) {
-                    const botones = remypePage.locator('#myModal button, .modal button, .close, .btn-close');
+                    const count = await modales.count();
+                    let huboVisible = false;
 
-                    const count = await botones.count();
                     for (let i = 0; i < count; i++) {
-                        try {
-                            await botones.nth(i).click({ force: true });
-                        } catch (e) {}
+                        const modal = modales.nth(i);
+                        const visible = await modal.isVisible().catch(() => false);
+                        if (!visible) continue;
+
+                        huboVisible = true;
+
+                        const botones = modal.locator('button, .close, .btn-close');
+                        const btnCount = await botones.count();
+                        for (let b = 0; b < btnCount; b++) {
+                            try {
+                                await botones.nth(b).click({ force: true, timeout: 2000 });
+                            } catch (e) {}
+                        }
                     }
 
                     await remypePage.keyboard.press('Escape').catch(() => {});
                     await remypePage.mouse.click(10, 10).catch(() => {});
-                    await remypePage.waitForTimeout(1500);
-                }
-            } catch (e) {}
+
+                    if (!huboVisible) break; // ya no queda ningún popup visible
+
+                    await remypePage.waitForTimeout(800);
+                } catch (e) {}
+            }
         };
 
         await cerrarModal();
@@ -440,7 +468,13 @@ async function flujoRemype(browser, ruc) {
         await cerrarModal();
 
         await remypePage.locator('button', { hasText: 'Buscar' }).click();
-        await remypePage.waitForTimeout(5000);
+
+        // 🟢 A veces el popup aparece justo DESPUÉS de dar Buscar
+        //    (por ejemplo, un aviso al procesar la búsqueda).
+        await remypePage.waitForTimeout(1000);
+        await cerrarModal();
+
+        await remypePage.waitForTimeout(4000);
 
         const remypeBuffer = await remypePage.screenshot({ fullPage: true });
 

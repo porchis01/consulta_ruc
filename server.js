@@ -1,5 +1,7 @@
 const express = require('express');
 const { chromium } = require('playwright');
+const https = require('https');
+const dns = require('dns');
 
 // 🟢 Red de seguridad: si algo inesperado lanza un error no controlado,
 //    se registra en el log en vez de tumbar todo el servidor (como pasó
@@ -712,7 +714,60 @@ app.get('/diag-remype', async (req, res) => {
     res.json(resultado);
 });
 
-const PORT = process.env.PORT || 3000;
+// ==========================================================
+// 🟦 RUTA DE DIAGNÓSTICO CRUDO (SIN NAVEGADOR)
+//     Prueba la conexión a REMYPE con una simple petición HTTPS de
+//     Node, sin pasar por Chromium/Playwright. Esto separa 2 hipótesis:
+//     - Si esto también falla  -> bloqueo a nivel de IP/red (cualquier
+//       herramienta que use la IP de Render es rechazada).
+//     - Si esto SÍ funciona    -> el bloqueo es específico al "fingerprint"
+//       del navegador (TLS/JA3, HTTP2, etc.), y se podría ajustar sin
+//       necesidad de un proxy.
+//     También fuerza IPv4, por si el problema es una ruta IPv6 bloqueada.
+//     Uso: https://TU-URL.onrender.com/diag-remype-raw
+// ==========================================================
+app.get('/diag-remype-raw', async (req, res) => {
+    const inicio = Date.now();
+    const resultado = { paso: 'resolviendo dns' };
+
+    try {
+        const direcciones = await new Promise((resolve, reject) => {
+            dns.lookup('apps.trabajo.gob.pe', { all: true }, (err, addrs) => {
+                if (err) reject(err); else resolve(addrs);
+            });
+        });
+        resultado.dns = direcciones;
+
+        resultado.paso = 'conexión https cruda (sin navegador)';
+
+        const statusCode = await new Promise((resolve, reject) => {
+            const req2 = https.get(
+                'https://apps.trabajo.gob.pe/consultas-remype/app/index.html',
+                { timeout: 20000, family: 4 },
+                (r) => {
+                    resolve(r.statusCode);
+                    r.resume();
+                }
+            );
+            req2.on('timeout', () => {
+                req2.destroy();
+                reject(new Error('Timeout en la conexión cruda (sin navegador), forzando IPv4'));
+            });
+            req2.on('error', reject);
+        });
+
+        resultado.ok = true;
+        resultado.statusCode = statusCode;
+
+    } catch (e) {
+        resultado.ok = false;
+        resultado.error = e.message;
+    } finally {
+        resultado.tiempoMs = Date.now() - inicio;
+    }
+
+    res.json(resultado);
+});
 app.listen(PORT, () => {
     console.log(`Servidor listo en el puerto ${PORT}`);
 });

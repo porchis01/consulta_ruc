@@ -768,6 +768,8 @@ app.get('/diag-remype-raw', async (req, res) => {
 
     res.json(resultado);
 });
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Servidor listo en el puerto ${PORT}`);
 });

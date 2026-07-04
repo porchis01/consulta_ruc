@@ -388,20 +388,21 @@ async function flujoRemype(browser, ruc) {
     try {
         remypePage = await browser.newPage();
 
-        // 🟢 Reintento simple + más tiempo: Render (servidor en EEUU) puede
-        //    tardar más en llegar al sitio de REMYPE que una conexión local,
-        //    así que 30s por defecto a veces no alcanza.
+        // 🟢 Reintento simple: al correr en serie (sin competir con SUNAT
+        //    por la CPU), 25s debería alcanzar en la mayoría de los casos.
+        //    Se deja 1 solo reintento como red de seguridad, para no
+        //    desperdiciar minutos completos si de verdad está caído.
         let remypeCargada = false;
-        for (let intento = 1; intento <= 3 && !remypeCargada; intento++) {
+        for (let intento = 1; intento <= 2 && !remypeCargada; intento++) {
             try {
                 await remypePage.goto(
                     'https://apps.trabajo.gob.pe/consultas-remype/app/index.html',
-                    { waitUntil: 'domcontentloaded', timeout: 45000 }
+                    { waitUntil: 'domcontentloaded', timeout: 25000 }
                 );
                 remypeCargada = true;
             } catch (e) {
                 console.log(`⚠ Intento ${intento} fallido al entrar a REMYPE:`, e.message);
-                if (intento < 3) await remypePage.waitForTimeout(2000);
+                if (intento < 2) await remypePage.waitForTimeout(1500);
             }
         }
         if (!remypeCargada) {
@@ -479,13 +480,16 @@ app.post('/generar', async (req, res) => {
     });
 
     // ==========================================================
-    // 🟦 SUNAT y REMYPE corren en paralelo (2 pestañas simultáneas)
-    //     en vez de uno después del otro.
+    // 🟦 SUNAT y REMYPE corren EN SERIE (uno después del otro), no en
+    //     paralelo. En el plan free de Render la CPU es muy limitada y
+    //     compartida; correr las 2 automatizaciones a la vez hace que
+    //     compitan por ese mismo recurso, lo que termina agotando los
+    //     reintentos de REMYPE (y viceversa) en vez de ahorrar tiempo.
+    //     En serie, cada flujo tiene toda la CPU disponible mientras
+    //     corre, y en la práctica resuelve más rápido y sin fallar.
     // ==========================================================
-    const [sunatResultado, remypeBase64] = await Promise.all([
-        flujoSunat(context, ruc),
-        flujoRemype(context, ruc)
-    ]);
+    const sunatResultado = await flujoSunat(context, ruc);
+    const remypeBase64 = await flujoRemype(context, ruc);
 
     const { sunatBase64, sunatWorkersBase64, sunatRepLegalesBase64 } = sunatResultado;
 

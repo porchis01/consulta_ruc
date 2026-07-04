@@ -1,20 +1,17 @@
 {
-  "name": "consulta-remype",
+  "name": "consulta-remype-sunat",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Generador de PDF con consulta REMYPE + SUNAT",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "postinstall": "npx playwright install --with-deps chromium"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "docx": "^9.7.1",
-    "express": "^5.2.1",
-    "fs": "^0.0.1-security",
-    "playwright": "^1.61.0",
-    "sharp": "^0.35.3"
+    "express": "^4.19.2",
+    "playwright": "^1.45.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

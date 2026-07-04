@@ -1,0 +1,20 @@
+{
+  "name": "consulta-remype",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "docx": "^9.7.1",
+    "express": "^5.2.1",
+    "fs": "^0.0.1-security",
+    "playwright": "^1.61.0",
+    "sharp": "^0.35.3"
+  }
+}

@@ -654,6 +654,64 @@ app.post('/generar', async (req, res) => {
     res.send(pdfBuffer);
 });
 
+// ==========================================================
+// 🟦 RUTA DE DIAGNÓSTICO TEMPORAL
+//     Prueba SOLO la conexión a REMYPE, sin correr todo el flujo de
+//     SUNAT, para identificar más rápido si el problema es de red
+//     (bloqueo/timeout de conexión) o de otra cosa (popups, selectores).
+//     Se puede quitar una vez resuelto el problema.
+//     Uso: entrar en el navegador a https://TU-URL.onrender.com/diag-remype
+// ==========================================================
+app.get('/diag-remype', async (req, res) => {
+    const inicio = Date.now();
+    let browser = null;
+    const resultado = { paso: 'iniciando' };
+
+    try {
+        browser = await chromium.launch({
+            headless: true,
+            args: ['--disable-blink-features=AutomationControlled']
+        });
+
+        const context = await browser.newContext({
+            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+                       '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            viewport: { width: 1366, height: 768 },
+            locale: 'es-PE',
+            timezoneId: 'America/Lima'
+        });
+
+        const page = await context.newPage();
+
+        resultado.paso = 'navegando';
+        await page.goto('https://apps.trabajo.gob.pe/consultas-remype/app/index.html', {
+            waitUntil: 'domcontentloaded',
+            timeout: 60000
+        });
+
+        resultado.ok = true;
+        resultado.paso = 'cargó domcontentloaded';
+        resultado.titulo = await page.title().catch(() => null);
+
+        // probar si el input aparece (para saber si el HTML real cargó bien)
+        try {
+            await page.waitForSelector('input', { timeout: 10000 });
+            resultado.inputEncontrado = true;
+        } catch (e) {
+            resultado.inputEncontrado = false;
+        }
+
+    } catch (e) {
+        resultado.ok = false;
+        resultado.error = e.message;
+    } finally {
+        resultado.tiempoMs = Date.now() - inicio;
+        if (browser) await browser.close().catch(() => {});
+    }
+
+    res.json(resultado);
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Servidor listo en el puerto ${PORT}`);

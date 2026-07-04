@@ -769,6 +769,63 @@ app.get('/diag-remype-raw', async (req, res) => {
     res.json(resultado);
 });
 
+// ==========================================================
+// 🟦 RUTA DE DIAGNÓSTICO COMPLETO (3 pruebas en una)
+//     1. Obtiene la IP pública de salida de Render (para poder
+//        verificarla luego en listas de reputación de IPs).
+//     2. Prueba conexión cruda (sin navegador) contra SUNAT, como
+//        control positivo: si esto funciona, confirma que el problema
+//        NO es un bug general de red en Render.
+//     3. Prueba conexión cruda contra REMYPE, para comparar.
+//     Uso: https://TU-URL.onrender.com/diag-red
+// ==========================================================
+function probarConexionCruda(url, timeoutMs = 15000) {
+    const inicio = Date.now();
+    return new Promise((resolve) => {
+        const req = https.get(url, { timeout: timeoutMs, family: 4 }, (r) => {
+            let datos = '';
+            r.on('data', (chunk) => { datos += chunk; });
+            r.on('end', () => {
+                resolve({
+                    ok: true,
+                    statusCode: r.statusCode,
+                    tiempoMs: Date.now() - inicio,
+                    primerosBytes: datos.slice(0, 100)
+                });
+            });
+        });
+        req.on('timeout', () => {
+            req.destroy();
+            resolve({ ok: false, error: 'timeout', tiempoMs: Date.now() - inicio });
+        });
+        req.on('error', (e) => {
+            resolve({ ok: false, error: e.message, tiempoMs: Date.now() - inicio });
+        });
+    });
+}
+
+app.get('/diag-red', async (req, res) => {
+    const resultado = {};
+
+    // 1) IP pública de salida de Render
+    resultado.ipSalida = await probarConexionCruda('https://api.ipify.org?format=json', 10000);
+
+    // 2) Control positivo: SUNAT (sabemos que responde vía navegador,
+    //    aquí lo probamos también en crudo)
+    resultado.sunatCrudo = await probarConexionCruda(
+        'https://e-consultaruc.sunat.gob.pe/cl-ti-itmrconsruc/FrameCriterioBusquedaWeb.jsp',
+        15000
+    );
+
+    // 3) REMYPE en crudo (lo que venimos probando)
+    resultado.remypeCrudo = await probarConexionCruda(
+        'https://apps.trabajo.gob.pe/consultas-remype/app/index.html',
+        20000
+    );
+
+    res.json(resultado);
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Servidor listo en el puerto ${PORT}`);

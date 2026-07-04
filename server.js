@@ -1,6 +1,16 @@
 const express = require('express');
 const { chromium } = require('playwright');
 
+// 🟢 Red de seguridad: si algo inesperado lanza un error no controlado,
+//    se registra en el log en vez de tumbar todo el servidor (como pasó
+//    con el timeout de REMYPE que no tenía try/catch).
+process.on('unhandledRejection', (reason) => {
+    console.log('⚠ Unhandled Rejection (el servidor sigue corriendo):', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.log('⚠ Uncaught Exception (el servidor sigue corriendo):', err);
+});
+
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 
@@ -373,48 +383,76 @@ async function flujoSunat(browser, ruc) {
 //     Se ejecuta en su propia pestaña, en paralelo con SUNAT.
 // ==========================================================
 async function flujoRemype(browser, ruc) {
-    const remypePage = await browser.newPage();
+    let remypePage = null;
 
-    await remypePage.goto('https://apps.trabajo.gob.pe/consultas-remype/app/index.html');
-    await remypePage.waitForTimeout(3000);
+    try {
+        remypePage = await browser.newPage();
 
-    const cerrarModal = async () => {
-        try {
-            const modal = remypePage.locator('#myModal');
-
-            if (await modal.count() > 0) {
-                const botones = remypePage.locator('#myModal button, .modal button, .close, .btn-close');
-
-                const count = await botones.count();
-                for (let i = 0; i < count; i++) {
-                    try {
-                        await botones.nth(i).click({ force: true });
-                    } catch (e) {}
-                }
-
-                await remypePage.keyboard.press('Escape').catch(() => {});
-                await remypePage.mouse.click(10, 10).catch(() => {});
-                await remypePage.waitForTimeout(1500);
+        // 🟢 Reintento simple + más tiempo: Render (servidor en EEUU) puede
+        //    tardar más en llegar al sitio de REMYPE que una conexión local,
+        //    así que 30s por defecto a veces no alcanza.
+        let remypeCargada = false;
+        for (let intento = 1; intento <= 3 && !remypeCargada; intento++) {
+            try {
+                await remypePage.goto(
+                    'https://apps.trabajo.gob.pe/consultas-remype/app/index.html',
+                    { waitUntil: 'domcontentloaded', timeout: 45000 }
+                );
+                remypeCargada = true;
+            } catch (e) {
+                console.log(`⚠ Intento ${intento} fallido al entrar a REMYPE:`, e.message);
+                if (intento < 3) await remypePage.waitForTimeout(2000);
             }
-        } catch (e) {}
-    };
+        }
+        if (!remypeCargada) {
+            throw new Error('No se pudo cargar la página de REMYPE tras varios intentos.');
+        }
 
-    await cerrarModal();
+        await remypePage.waitForTimeout(3000);
 
-    await remypePage.waitForSelector('input', { timeout: 15000 });
-    await remypePage.locator('input').first().fill(ruc);
+        const cerrarModal = async () => {
+            try {
+                const modal = remypePage.locator('#myModal');
 
-    await cerrarModal();
+                if (await modal.count() > 0) {
+                    const botones = remypePage.locator('#myModal button, .modal button, .close, .btn-close');
 
-    await remypePage.locator('button', { hasText: 'Buscar' }).click();
-    await remypePage.waitForTimeout(5000);
+                    const count = await botones.count();
+                    for (let i = 0; i < count; i++) {
+                        try {
+                            await botones.nth(i).click({ force: true });
+                        } catch (e) {}
+                    }
 
-    const remypeBuffer = await remypePage.screenshot({ fullPage: true });
-    await remypePage.close();
+                    await remypePage.keyboard.press('Escape').catch(() => {});
+                    await remypePage.mouse.click(10, 10).catch(() => {});
+                    await remypePage.waitForTimeout(1500);
+                }
+            } catch (e) {}
+        };
 
-    console.log("✓ Captura REMYPE obtenida");
+        await cerrarModal();
 
-    return remypeBuffer.toString('base64');
+        await remypePage.waitForSelector('input', { timeout: 15000 });
+        await remypePage.locator('input').first().fill(ruc);
+
+        await cerrarModal();
+
+        await remypePage.locator('button', { hasText: 'Buscar' }).click();
+        await remypePage.waitForTimeout(5000);
+
+        const remypeBuffer = await remypePage.screenshot({ fullPage: true });
+
+        console.log("✓ Captura REMYPE obtenida");
+
+        return remypeBuffer.toString('base64');
+
+    } catch (e) {
+        console.log("⚠ Error REMYPE:", e.message);
+        return null;
+    } finally {
+        if (remypePage) await remypePage.close().catch(() => {});
+    }
 }
 
 // 🟢 BOT
@@ -533,7 +571,9 @@ app.post('/generar', async (req, res) => {
         <div class="hoja">
             <h2>REPORTE REMYPE</h2>
             <p><b>RUC:</b> ${ruc}</p>
-            ${imgTag(remypeBase64)}
+            ${remypeBase64
+                ? imgTag(remypeBase64)
+                : '<p><i>No se pudo obtener la información de REMYPE.</i></p>'}
         </div>
 
     </body>
